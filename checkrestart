@@ -1,0 +1,496 @@
+#!/usr/bin/python
+
+#
+# This version Modified by Steen Eugen Poulsen <s.e.poulsen@gmail.com> 
+#
+
+# WARNING
+# This program is NOT inteligent, in no way should it's output be used
+# automatically. The output needs to be parsed by human inteligence to
+# verify it.
+
+#
+# To run the program under Ubuntu and Debian you need:
+#    dpkg, lsb_release, lsof
+#
+# The requirement list for Gentoo looks like:
+#    qlist, qfile (portage-utils), lsb_release (lsb-release), lsof
+
+# - Changed the code to be Gentoo Linux compatible, by using qfile and qlist
+#   from portage-utils.
+# - Changed the way it detects that applications in memory is different from
+#   disk versions.
+# - This version runs on Ubuntu, Debian and Gentoo distributions
+# - It has support for whitelist, blacklist and searchlist for selecting what
+#   is checked for memory/disk differences.
+# - Fixed security bug that allowed local users to trick checksecurity into
+#   running anything as root.
+# 
+# To Do:
+# - Configuration file/Command line options
+#
+
+#
+#--- Original comments from upstream
+#
+# Copyright (C) 2001 Matt Zimmerman <mdz@debian.org>
+
+# Further updated by Javier Fernandez-Sanguino <jfs@debian.org>
+# - included patch from Justin Pryzby <justinpryzby_AT_users.sourceforge.net>
+#   to work with the latest Lsof - modify to reduce false positives by not
+#   complaining about deleted inodes/files under /tmp/, /var/log/ or named
+#   /SYSV. 
+#
+
+# PENDING:
+# - included code from 'psdel' contributed by Sam Morris <sam_AT_robots.org.uk> to
+#   make the program work even if lsof is not installed
+#   (available at http://robots.org.uk/src/psdel)
+# 
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, 
+# MA 02110-1301 USA
+#
+# On Debian systems, a copy of the GNU General Public License may be
+# found in /usr/share/common-licenses/GPL.
+
+import sys
+import os, errno
+import re
+import stat
+import pwd
+import sys
+import string
+import subprocess
+
+if os.getuid() != 0:
+    sys.stderr.write('This program must be run as root\n')
+    sys.stderr.write('in order to collect information about all open file descriptors\n')
+    sys.exit(1)
+
+#
+# dpkg version of the package search
+#
+def deb_fQuery(programs, packages):
+    diverted = None
+
+    dpkgQuery = ["dpkg", "--search"] + programs.keys()
+    dpkgProc = subprocess.Popen(dpkgQuery, stdout=subprocess.PIPE)
+    for line in dpkgProc.stdout.readlines():
+        if line.startswith('local diversion'):
+            continue
+        
+        m = re.match('^diversion by (\S+) (from|to): (.*)$', line)
+        if m:
+            if m.group(2) == 'from':
+                diverted = m.group(3)
+                continue
+            if not diverted:
+                raise 'Weird error while handling diversion'
+            packagename, program = m.group(1), diverted
+        else:
+            packagename, program = line[:-1].split(': ')
+
+        packages.setdefault(packagename,Package(packagename))
+        packages[packagename].processes.extend(programs[program])
+
+    return 0
+#
+# Portage compatible package search
+#
+# To Do: Make equery version.
+def portage_fQuery(programs, packages):
+    
+    dpkgQuery = ["qfile", "-C"] + programs.keys()
+    dpkgProc = subprocess.Popen(dpkgQuery, stdout=subprocess.PIPE)
+    for line in dpkgProc.stdout.readlines():
+        packagename, program = line[:-1].split(' ')
+        program = re.match('\((.*)\)', program).group(1)
+
+        packages.setdefault(packagename,Package(packagename))
+        packages[packagename].processes.extend(programs[program])
+
+    return 0
+
+#
+# Distribution Detection
+#
+DistSystem = re.match( '(.*)\n', os.popen('lsb_release -si').read()).group(1)
+
+#
+# Now we know where we are, we can configure ourself to use the appopiate code.
+#
+if DistSystem == 'Gentoo':
+    fQuery = portage_fQuery
+    fList = ['qlist']
+elif DistSystem == 'Debian' or DistSystem == 'Ubuntu':
+    fQuery = deb_fQuery
+    fList = ['dpkg', '--listfiles']
+    #'dpkg-query --listfiles '
+
+#
+#
+#
+def find_cmd(cmd):
+     dirs = [ '/', '/usr/', '/usr/local/', sys.prefix ]
+     for d in dirs:
+         for sd in ('bin', 'sbin'):
+             location = os.path.join(d, sd, cmd)
+             if os.path.exists(location):
+                 return location
+     return 0
+
+
+def main():
+    process = None
+    toRestart = {}
+
+    toRestart = lsofcheck()
+# Check if we have lsof, if not, use psdel
+#    if find_cmd('lsof'):
+#         toRestart = lsofcheck()
+#    else:
+# TODO - This does not work yet:
+#        toRestart = psdelcheck()
+
+    print "Found %d processes using old versions of upgraded files" % len(toRestart)
+
+    # Nothing to do?
+    if len(toRestart) == 0:
+        sys.exit(0)
+
+    programs = {}
+    packages = {}
+
+    for process in toRestart:
+        programs.setdefault(process.program, [])
+        programs[process.program].append(process)
+
+    print "(%d distinct programs)" % len(programs)
+
+    fQuery(programs, packages)
+
+    print "(%d distinct packages)" % len(packages)
+
+    if len(packages) == 0:
+        print "No packages seem to need to be restarted."
+        print "(please read checkrestart(1))"
+        sys.exit(0)
+
+    for package in packages.values():
+	# It's util-linux on Debian, but sys-apps/util-linux on Gentoo, this search should find it on both
+        if re.compile("util-linux").search(package.name):
+            continue
+
+        listQuery = []
+        for i in fList:
+            listQuery.append(i)
+            
+        listQuery.append(package.name)
+            
+        listProc = subprocess.Popen(listQuery, stdout=subprocess.PIPE)
+        for line in listProc.stdout.readlines():
+            path = line[:-1]
+            if path.startswith('/etc/init.d/'):
+                if path.endswith('.sh'):
+                    continue
+                package.initscripts.append(path)
+
+        # Alternatively, find init.d scripts that match the process name
+        if len(package.initscripts) == 0:
+            for process in package.processes:
+                path = '/etc/init.d/' + os.path.basename(process.program)
+                if os.path.exists(path):
+                    package.initscripts.append(path)
+
+            # Remove duplicate inits
+            package.initscripts = [ u for u in package.initscripts if u not in locals()['_[1]'] ]
+
+    restartable = []
+    nonrestartable = []
+    restartCommands = []
+    for package in packages.values():
+        if len(package.initscripts) > 0:
+            restartable.append(package)
+            restartCommands.extend(map(lambda s: s + ' restart',package.initscripts))
+        else:
+            nonrestartable.append(package)
+            
+    if len(restartable) > 0:
+        print
+        print "Of these, %d seem to contain init scripts which can be used to restart them:" % len(restartable)
+        # TODO - consider putting this in a --verbose option
+        print "The following packages seem to have init scripts that could be used\nto restart them:"
+        for package in restartable:
+            print package.name + ':'
+            for process in package.processes:
+                print "\t%s\t%s" % (process.pid,process.program)
+                    
+        print
+        print "These are the init scripts:"
+        print '\n'.join(restartCommands)
+        print
+
+    if len(nonrestartable) == 0:
+        sys.exit(0)
+
+    # TODO - consider putting this in a --verbose option
+    print "These processes do not seem to have an associated init script to restart them:"
+    for package in nonrestartable:
+        print package.name + ':'
+        for process in package.processes:
+            print "\t%s\t%s" % (process.pid,process.program)
+
+# Miravlix 2007-08-23: This little gem made my head spin for a while, but then I used a bigger hammer.
+# It makes an array using the process id as key array[pid], depending on the "field" value, it then stores 
+# the data in sub arrays for future processing.
+#
+# We have DEL types and in the path we have (deleted) or inode that indicates we should check in more details if this
+# means we have a different version in memory than what is on the disk.
+#
+# I think the array design here might be bad, but at least it's working now. Each array[pid] contains three arrays, those three
+# arrays is only kept in sync if it's done through the if statements, maybe doing array[pid].data[links][files][descriptors]
+# or something like that, would make this slightly less messy, at the moment, only append and descriptors is kept in sync.
+def lsofcheck():
+    processes = {}
+
+    for line in os.popen('lsof +XL -F nf').readlines():
+        field, data = line[0], line[1:-1]
+
+	# p for PID
+        if field == 'p':
+            process = processes.setdefault(data,Process(int(data)))
+
+        elif field == 'k':
+            process.links.append(data)
+
+        elif field == 'f':
+            process.descriptors.append(data)
+
+        elif field == 'n':
+	    # We are detecting memory/disk differnces in a lot of files all over the disk, but a difference/deleted status
+	    # of a file in /tmp doesn't mean we should reload.
+
+            # So here is the beginnig of a configuration file and/or command line system to set where we search.
+
+            # I beleive this search is close to optimal as a default configuration.
+            # It detects most software upgrades done within the package system.
+	    searchlist = []
+	    searchlist = ['/bin/', '/lib', '/sbin/']
+
+            # An alternative using all files in standard package system paths.
+            # It does detect false positives in /usr/share though.
+	    whitelist = []
+#	    whitelist = ['/bin', '/lib', '/opt', '/sbin', '/usr']
+
+            # We also support a blacklist.
+            # The change of detecting false positives is worse here,
+            # but that doesn't mean it isn't useful.
+	    blacklist = []
+#	    blacklist = ["/var", "/tmp", "/home", "/SYSV", "/dev"]
+
+	    # Make sure the user isn't expecting to mix the lists
+            # As we unfortunately don't support it.
+	    setlist = 0
+	    if len(searchlist) > 0:
+		setlist = 1
+	    if len(whitelist) > 0:
+		setlist = setlist + 1
+	    if len(blacklist) > 0:
+		setlist = setlist + 1
+	    if setlist > 1:
+		print "You have to choose either search, white or black list."
+		sys.exit(1)
+
+            # The searchlist code, default ignore everything
+	    if len(searchlist) > 0:
+		found = -1
+		for list in searchlist:
+		    if re.compile(list).search(data):
+			found = 1
+			break
+                    
+            # The whitelist, default ignore everything
+	    elif len(whitelist) > 0:
+		# Whitelist, so default is ignore
+		found = -1
+	    	for list in whitelist:
+		    if data.startswith( list ):
+		    	found = 1
+		    	break
+
+            # the blacklist, default accept everything
+	    elif len(blacklist) > 0:
+		# Blacklist, here we allow everything, unless it's in the list
+		found = 1
+		for list in blacklist:
+		    if data.startswith( list ):
+		        found = -1
+		        break
+
+	    if found == 1:
+		process.files.append(data)
+	    else:
+	    # We remove every descriptor for files that we don't bother checking. We just need to remove/change descriptors
+	    # that contains "DEL", but as I haven't done much python yet, I don't know what is fastest. .pop() + searching less
+	    # records or if + .pop() + searching some more records. It's also possible replacing .pop() with descriptor = "xxx"
+	    # would be faster.
+	        process.descriptors.pop()
+
+    toRestart = filter(lambda process: process.needsRestart(),
+                       processes.values())
+    return toRestart
+
+def psdelcheck():
+# TODO - Needs to be fixed to work here
+# Useful for seeing which processes need to be restarted after you upgrade
+# programs or shared libraries. Written to replace checkrestart(1) from the
+# debian-goodies, which often misses out processes due to bugs in lsof; see
+# <http://bugs.debian.org/264985> for more information.
+
+    numeric = re.compile(r'\d+')
+    toRestart = map (delmaps, map (string.atoi, filter (numeric.match, os.listdir('/proc'))))
+    return toRestart
+
+def delmaps (pid):
+    processes = {}
+    process = processes.setdefault(pid,Process(int(pid)))
+    deleted = re.compile(r'(.*) \(deleted\)$')
+    boring = re.compile(r'/(dev/zero|SYSV([\da-f]{8}))')
+
+    mapline = re.compile(r'^[\da-f]{8}-[\da-f]{8} [r-][w-][x-][sp-] '
+            r'[\da-f]{8} [\da-f]{2}:[\da-f]{2} (\d+) *(.+)( \(deleted\))?\n$')
+    maps = open('/proc/%d/maps' % (pid))
+    for line in maps.readlines ():
+        m = mapline.match (line)
+        if (m):
+            inode = string.atoi (m.group (1))
+            file = m.group (2)
+            if inode == 0:
+                continue
+            # remove ' (deleted)' suffix
+            if deleted.match (file):
+                file = file [0:-10]
+            if boring.match (file):
+                continue
+            # list file names whose inode numbers do not match their on-disk
+            # values; or files that do not exist at all
+            try:
+                if os.stat (file)[stat.ST_INO] != inode:
+                    process = processes.setdefault(pid,Process(int(pid)))
+            except OSError, (e, strerror):
+                if e == errno.ENOENT:
+                    process = processes.setdefault(pid,Process(int(pid)))
+                else:
+                    sys.stderr.write ('checkrestart (psdel): %s %s: %s\n' % (SysProcess.get(pid).info (), file, os.strerror (e)))
+        else:
+            print 'checkrestart (psdel): Error parsing "%s"' % (line [0:-1]) 
+    maps.close ()
+
+    return process
+
+
+class SysProcess:
+	re_name = re.compile('Name:\t(.*)$')
+	re_uids = re.compile('Uid:\t(\d+)\t(\d+)\t(\d+)\t(\d+)$')
+	processes = {}
+	def get (pid):
+		try:
+			return Process.processes [pid]
+		except KeyError:
+			Process.processes [pid] = Process (pid)
+			return Process.get (pid)
+
+	# private
+	def __init__ (self, pid):
+		self.pid = pid
+
+		status = open ('/proc/%d/status' % (self.pid))
+		for line in status.readlines ():
+			m = self.re_name.match (line)
+			if m:
+				self.name = m.group (1)
+				continue
+			m = self.re_uids.match (line)
+			if m:
+				self.user = pwd.getpwuid (string.atoi (m.group (1)))[0]
+				continue
+		status.close ()
+	
+	def info (self):
+		return '%d %s %s' % (self.pid, self.name, self.user)
+
+class Process:
+    def __init__(self, pid):
+        self.pid = pid
+        self.files = []
+        self.descriptors = []
+        self.links = []
+
+        try:
+            self.program = self.cleanFile(os.readlink('/proc/%d/exe' % self.pid))
+        except OSError, e:
+            if e.errno != 2:
+                raise
+
+    def cleanFile(self, f):
+        # /proc/pid/exe has all kinds of junk in it sometimes
+        null = f.find('\0')
+        if null != -1:
+            f = f[:null]
+        return re.sub('( \(deleted\)|.dpkg-new).*$','',f)
+
+    # Check if a process needs to be restarted, previously we would
+    # just check if it used libraries named '.dpkg-new' since that's
+    # what dpkg would do. Now we need to be more contrieved.
+    def needsRestart(self):
+
+	# The order of if's is speed optimized.
+	#
+	# Links rarely contains data, so it's quickle done.
+	#
+	# Then we check descriptors = "DEL"
+	#
+ 	# And last we do the complicated searches through files.
+
+	# Mir Note: Never seen a links record, so no idea if this is correct.
+	for f in self.links:
+	    if f == 0:
+	    	return 1
+
+	# if we find descriptors = "DEL" mark it for restart.
+	for f in self.descriptors:
+            if f == "DEL":
+	    	return 1
+
+	# If all else fails, we look through files to detect memory/disk differences.
+        for f in self.files:
+            if f.endswith(' (deleted)'):
+	    	return 1
+
+	    if re.compile("\(path inode=[0-9]+\)$").search(f):
+	    	return 1
+
+        return 0
+
+class Package:
+    def __init__(self, name):
+        self.name = name
+        self.initscripts = []
+        self.processes = []
+
+if __name__ == '__main__':
+    main()
+
