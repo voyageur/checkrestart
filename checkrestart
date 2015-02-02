@@ -1,8 +1,8 @@
 #!/usr/bin/python
 
 #
-# This version Modified by Steen Eugen Poulsen <s.e.poulsen@gmail.com> 
-#
+# This version Modified by Steen Eugen Poulsen <s.e.poulsen@gmail.com>,
+# and at https://github.com/voyageur/checkrestart-gentoo
 
 # WARNING
 # This program is NOT inteligent, in no way should it's output be used
@@ -25,7 +25,7 @@
 #   is checked for memory/disk differences.
 # - Fixed security bug that allowed local users to trick checksecurity into
 #   running anything as root.
-# 
+#
 # To Do:
 # - Configuration file/Command line options
 #
@@ -39,14 +39,14 @@
 # - included patch from Justin Pryzby <justinpryzby_AT_users.sourceforge.net>
 #   to work with the latest Lsof - modify to reduce false positives by not
 #   complaining about deleted inodes/files under /tmp/, /var/log/ or named
-#   /SYSV. 
+#   /SYSV.
 #
 
 # PENDING:
 # - included code from 'psdel' contributed by Sam Morris <sam_AT_robots.org.uk> to
 #   make the program work even if lsof is not installed
 #   (available at http://robots.org.uk/src/psdel)
-# 
+#
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -60,7 +60,7 @@
 
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, 
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 # MA 02110-1301 USA
 #
 # On Debian systems, a copy of the GNU General Public License may be
@@ -91,7 +91,7 @@ def deb_fQuery(programs, packages):
     for line in dpkgProc.stdout.readlines():
         if line.startswith('local diversion'):
             continue
-        
+
         m = re.match('^diversion by (\S+) (from|to): (.*)$', line)
         if m:
             if m.group(2) == 'from':
@@ -112,10 +112,10 @@ def deb_fQuery(programs, packages):
 #
 # To Do: Make equery version.
 def portage_fQuery(programs, packages):
-    
-    dpkgQuery = ["qfile", "-C"] + programs.keys()
-    dpkgProc = subprocess.Popen(dpkgQuery, stdout=subprocess.PIPE)
-    for line in dpkgProc.stdout.readlines():
+
+    qfileQuery = ["qfile", "-C"] + programs.keys()
+    qfileProc = subprocess.Popen(qfileQuery, stdout=subprocess.PIPE)
+    for line in qfileProc.stdout.readlines():
         packagename, program = line[:-1].split(' ')
         program = re.match('\((.*)\)', program).group(1)
 
@@ -130,7 +130,7 @@ def portage_fQuery(programs, packages):
 DistSystem = re.match( '(.*)\n', os.popen('lsb_release -si').read()).group(1)
 
 #
-# Now we know where we are, we can configure ourself to use the appopiate code.
+# Now we know where we are, we can configure ourself to use the appropiate code.
 #
 if DistSystem == 'Gentoo':
     fQuery = portage_fQuery
@@ -138,7 +138,6 @@ if DistSystem == 'Gentoo':
 elif DistSystem == 'Debian' or DistSystem == 'Ubuntu':
     fQuery = deb_fQuery
     fList = ['dpkg', '--listfiles']
-    #'dpkg-query --listfiles '
 
 #
 #
@@ -197,26 +196,29 @@ def main():
         listQuery = []
         for i in fList:
             listQuery.append(i)
-            
+
         listQuery.append(package.name)
-            
+
         listProc = subprocess.Popen(listQuery, stdout=subprocess.PIPE)
         for line in listProc.stdout.readlines():
             path = line[:-1]
             if path.startswith('/etc/init.d/'):
                 if path.endswith('.sh'):
                     continue
-                package.initscripts.append(path)
+                package.initscripts.add(path[12:])
+            sys.stdout.flush()
 
         # Alternatively, find init.d scripts that match the process name
         if len(package.initscripts) == 0:
             for process in package.processes:
-                path = '/etc/init.d/' + os.path.basename(process.program)
-                if os.path.exists(path):
-                    package.initscripts.append(path)
-
-            # Remove duplicate inits
-            package.initscripts = list(set(package.initscripts))
+                proc_name = os.path.basename(process.program)
+                if os.path.exists('/etc/init.d/' + proc_name):
+                    package.initscripts.add(proc_name)
+                else:
+                    # Workarounds for some packages
+                    # TODO: substitutions hash instead of hardcoded paths
+                    if proc_name.startswith('mysqld') and os.path.exists('/etc/init.d/mysql'):
+                        package.initscripts.add('mysql')
 
     restartable = []
     nonrestartable = []
@@ -224,20 +226,18 @@ def main():
     for package in packages.values():
         if len(package.initscripts) > 0:
             restartable.append(package)
-            restartCommands.extend(map(lambda s: s + ' restart',package.initscripts))
+            restartCommands.extend(map(lambda s: '/etc/init.d/' + s + ' restart',package.initscripts))
         else:
             nonrestartable.append(package)
-            
+
     if len(restartable) > 0:
         print
         print "Of these, %d seem to contain init scripts which can be used to restart them:" % len(restartable)
-        # TODO - consider putting this in a --verbose option
-        print "The following packages seem to have init scripts that could be used\nto restart them:"
         for package in restartable:
             print package.name + ':'
             for process in package.processes:
                 print "\t%s\t%s" % (process.pid,process.program)
-                    
+
         print
         print "These are the init scripts:"
         print '\n'.join(restartCommands)
@@ -254,7 +254,7 @@ def main():
             print "\t%s\t%s" % (process.pid,process.program)
 
 # Miravlix 2007-08-23: This little gem made my head spin for a while, but then I used a bigger hammer.
-# It makes an array using the process id as key array[pid], depending on the "field" value, it then stores 
+# It makes an array using the process id as key array[pid], depending on the "field" value, it then stores
 # the data in sub arrays for future processing.
 #
 # We have DEL types and in the path we have (deleted) or inode that indicates we should check in more details if this
@@ -321,7 +321,7 @@ def lsofcheck():
 		    if re.compile(list).search(data):
 			found = 1
 			break
-                    
+
             # The whitelist, default ignore everything
 	    elif len(whitelist) > 0:
 		# Whitelist, so default is ignore
@@ -396,7 +396,7 @@ def delmaps (pid):
                 else:
                     sys.stderr.write ('checkrestart (psdel): %s %s: %s\n' % (SysProcess.get(pid).info (), file, os.strerror (e)))
         else:
-            print 'checkrestart (psdel): Error parsing "%s"' % (line [0:-1]) 
+            print 'checkrestart (psdel): Error parsing "%s"' % (line [0:-1])
     maps.close ()
 
     return process
@@ -438,12 +438,67 @@ class Process:
         self.files = []
         self.descriptors = []
         self.links = []
+        self.program = ''
 
         try:
-            self.program = self.cleanFile(os.readlink('/proc/%d/exe' % self.pid))
+            self.program = os.readlink('/proc/%d/exe' % self.pid)
+            # if the executable command is an interpreter such as perl/python,
+            # we want to find the real program
+            m = re.match("^/usr/bin/(perl|python)", self.program)
+            if m:
+                with open('/proc/%d/cmdline' % self.pid, 'r') as cmdline:
+                    # only match program in /usr (ex.: /usr/sbin/smokeping)
+                    # ignore child, etc.
+                    #m = re.search(r'^(([/]\w*){1,5})\s.*$', cmdline.read())
+                    # Split by null-bytes, see proc(5)
+                    data = cmdline.read().split('\x00')
+                    # Drop null-byte characters at the end
+                    while not data[-1]: data.pop()
+                    # Spamd sets $0 wrongly, see
+                    # https://bugzilla.redhat.com/show_bug.cgi?id=755644
+                    # i.e. the blank after spamd is relevant in case
+                    # this will be fixed in the future.
+                    m = re.match("^/usr/sbin/spamd |^spamd ", data[0])
+                    if m:
+                        self.program = "/usr/sbin/spamd"
+                    else:
+                        # Strip first value, the interpreter
+                        data.pop(0)
+                        # Check if something's left after the interpreter, see #715000
+                        if data:
+                            # Strip all options following the interpreter, e.g. python's -O
+                            m = re.match("^-", data[0])
+                            while (m):
+                                data.pop(0)
+                                m = re.match("^-", data[0])
+                            if data and data[0]: data = data[0]
+                            data = self.which(data)
+                            m = re.search(r'^(/usr/\S+)$', data)
+                            if m:
+                                # store the real full path of script as the program
+                                self.program = m.group(1)
         except OSError, e:
-            if e.errno != 2:
-                raise
+            if e.errno != errno.ENOENT:
+                if self.pid == 1:
+                    sys.stderr.write("Found unreadable pid 1. Assuming we're under vserver and continuing.\n")
+                else:
+                    sys.stderr.write('ERROR: Failed to read %d' % self.pid)
+                    raise
+        self.program = self.cleanFile(self.program)
+
+    def which(self, program):
+        if os.path.isabs(program):
+            return program
+        path = os.environ.get("PATH", os.defpath).split(os.pathsep)
+        seen = set()
+        for dir in path:
+            dir = os.path.normcase(os.path.abspath(dir))
+            if not dir in seen:
+                seen.add(dir)
+                name = os.path.join(dir, program)
+                if os.path.exists(name) and os.access(name, os.F_OK|os.X_OK) and not os.path.isdir(name):
+                    return name
+        return program
 
     def cleanFile(self, f):
         # /proc/pid/exe has all kinds of junk in it sometimes
@@ -488,7 +543,8 @@ class Process:
 class Package:
     def __init__(self, name):
         self.name = name
-        self.initscripts = []
+        # use a set, we don't need duplicates
+        self.initscripts = set()
         self.processes = []
 
 if __name__ == '__main__':
