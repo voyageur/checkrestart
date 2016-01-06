@@ -174,7 +174,10 @@ def main():
     packages = {}
 
     for process in toRestart:
-        programs.setdefault(process.program, [])
+        try:
+            programs.setdefault(process.program, [])
+        except AttributeError:
+            continue
         programs[process.program].append(process)
 
     print "(%d distinct programs)" % len(programs)
