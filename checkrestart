@@ -114,7 +114,7 @@ def deb_fQuery(programs, packages):
 def portage_fQuery(programs, packages):
 
     qfileQuery = ["qfile", "-C"] + programs.keys()
-    qfileProc = subprocess.Popen(qfileQuery, stdout=subprocess.PIPE)
+    qfileProc = subprocess.Popen(qfileQuery, stdout=subprocess.PIPE, cwd='/')
     for line in qfileProc.stdout.readlines():
         packagename, program = line[:-1].split(' ')
         program = re.match('\((.*)\)', program).group(1)
