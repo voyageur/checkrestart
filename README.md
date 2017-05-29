@@ -1,11 +1,12 @@
-### checkrestart-gentoo
-
+## checkrestart
 A fork of debian-goodies' checkrestart, adapted for Gentoo
 
 Originally developed at http://arcdraco.net/checkrestart (now defunct)
 
 ### Dependencies
 Python, sys-apps/lsb-release, app-portage/portage-utils, sys-process/lsof
+
+Available in the Gentoo "voyageur" overlay
 
 ### Todo list
 * Merge patches lying around
