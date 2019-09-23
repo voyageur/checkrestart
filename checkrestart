@@ -86,8 +86,8 @@ if os.getuid() != 0:
 def deb_fQuery(programs, packages):
     diverted = None
 
-    dpkgQuery = ["dpkg", "--search"] + programs.keys()
-    dpkgProc = subprocess.Popen(dpkgQuery, stdout=subprocess.PIPE)
+    dpkgQuery = ["dpkg", "--search"] + list(programs.keys())
+    dpkgProc = subprocess.Popen(dpkgQuery, stdout=subprocess.PIPE, universal_newlines=True)
     for line in dpkgProc.stdout.readlines():
         if line.startswith('local diversion'):
             continue
@@ -98,7 +98,7 @@ def deb_fQuery(programs, packages):
                 diverted = m.group(3)
                 continue
             if not diverted:
-                raise 'Weird error while handling diversion'
+                raise Exception('Weird error while handling diversion')
             packagename, program = m.group(1), diverted
         else:
             packagename, program = line[:-1].split(': ')
@@ -113,11 +113,10 @@ def deb_fQuery(programs, packages):
 # To Do: Make equery version.
 def portage_fQuery(programs, packages):
 
-    qfileQuery = ["qfile", "-C"] + programs.keys()
-    qfileProc = subprocess.Popen(qfileQuery, stdout=subprocess.PIPE, cwd='/')
+    qfileQuery = ["qfile", "-C"] + list(programs.keys())
+    qfileProc = subprocess.Popen(qfileQuery, stdout=subprocess.PIPE, universal_newlines=True, cwd='/')
     for line in qfileProc.stdout.readlines():
         packagename, program = line[:-1].split(': ')
-
         packages.setdefault(packagename,Package(packagename))
         packages[packagename].processes.extend(programs[program])
 
@@ -163,7 +162,7 @@ def main():
 # TODO - This does not work yet:
 #        toRestart = psdelcheck()
 
-    print "Found %d processes using old versions of upgraded files" % len(toRestart)
+    print("Found %d processes using old versions of upgraded files" % len(toRestart))
 
     # Nothing to do?
     if len(toRestart) == 0:
@@ -179,15 +178,15 @@ def main():
             continue
         programs[process.program].append(process)
 
-    print "(%d distinct programs)" % len(programs)
+    print("(%d distinct programs)" % len(programs))
 
     fQuery(programs, packages)
 
-    print "(%d distinct packages)" % len(packages)
+    print("(%d distinct packages)" % len(packages))
 
     if len(packages) == 0:
-        print "No packages seem to need to be restarted."
-        print "(please read checkrestart(1))"
+        print("No packages seem to need to be restarted.")
+        print("(please read checkrestart(1))")
         sys.exit(0)
 
     for package in packages.values():
@@ -201,7 +200,7 @@ def main():
 
         listQuery.append(package.name)
 
-        listProc = subprocess.Popen(listQuery, stdout=subprocess.PIPE)
+        listProc = subprocess.Popen(listQuery, stdout=subprocess.PIPE, universal_newlines=True)
         for line in listProc.stdout.readlines():
             path = line[:-1]
             if path.startswith('/etc/init.d/'):
@@ -228,32 +227,32 @@ def main():
     for package in packages.values():
         if len(package.initscripts) > 0:
             restartable.append(package)
-            restartCommands.extend(map(lambda s: '/etc/init.d/' + s + ' restart',package.initscripts))
+            restartCommands.extend(['/etc/init.d/' + s + ' restart' for s in package.initscripts])
         else:
             nonrestartable.append(package)
 
     if len(restartable) > 0:
-        print
-        print "Of these, %d seem to contain init scripts which can be used to restart them:" % len(restartable)
+        print()
+        print("Of these, %d seem to contain init scripts which can be used to restart them:" % len(restartable))
         for package in restartable:
-            print package.name + ':'
+            print(package.name + ':')
             for process in package.processes:
-                print "\t%s\t%s" % (process.pid,process.program)
+                print("\t%s\t%s" % (process.pid,process.program))
 
-        print
-        print "These are the init scripts:"
-        print '\n'.join(restartCommands)
-        print
+        print()
+        print("These are the init scripts:")
+        print('\n'.join(restartCommands))
+        print()
 
     if len(nonrestartable) == 0:
         sys.exit(0)
 
     # TODO - consider putting this in a --verbose option
-    print "These processes do not seem to have an associated init script to restart them:"
+    print("These processes do not seem to have an associated init script to restart them:")
     for package in nonrestartable:
-        print package.name + ':'
+        print(package.name + ':')
         for process in package.processes:
-            print "\t%s\t%s" % (process.pid,process.program)
+            print("\t%s\t%s" % (process.pid,process.program))
 
 # Miravlix 2007-08-23: This little gem made my head spin for a while, but then I used a bigger hammer.
 # It makes an array using the process id as key array[pid], depending on the "field" value, it then stores
@@ -313,7 +312,7 @@ def lsofcheck():
             if len(blacklist) > 0:
                 setlist = setlist + 1
             if setlist > 1:
-                print "You have to choose either search, white or black list."
+                print("You have to choose either search, white or black list.")
                 sys.exit(1)
 
             # The searchlist code, default ignore everything
@@ -351,8 +350,7 @@ def lsofcheck():
                 # would be faster.
                 process.descriptors.pop()
 
-    toRestart = filter(lambda process: process.needsRestart(),
-                       processes.values())
+    toRestart = [process for process in processes.values() if process.needsRestart()]
     return toRestart
 
 def psdelcheck():
@@ -392,13 +390,14 @@ def delmaps (pid):
             try:
                 if os.stat (file)[stat.ST_INO] != inode:
                     process = processes.setdefault(pid,Process(int(pid)))
-            except OSError, (e, strerror):
+            except OSError as stat_error:
+                (e, strerror) = stat_error.args
                 if e == errno.ENOENT:
                     process = processes.setdefault(pid,Process(int(pid)))
                 else:
                     sys.stderr.write ('checkrestart (psdel): %s %s: %s\n' % (SysProcess.get(pid).info (), file, os.strerror (e)))
         else:
-            print 'checkrestart (psdel): Error parsing "%s"' % (line [0:-1])
+            print('checkrestart (psdel): Error parsing "%s"' % line[0:-1])
     maps.close ()
 
     return process
@@ -479,7 +478,7 @@ class Process:
                             if m:
                                 # store the real full path of script as the program
                                 self.program = m.group(1)
-        except OSError, e:
+        except OSError as e:
             if e.errno != errno.ENOENT:
                 if self.pid == 1:
                     sys.stderr.write("Found unreadable pid 1. Assuming we're under vserver and continuing.\n")
