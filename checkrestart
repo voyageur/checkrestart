@@ -191,7 +191,7 @@ def main():
         sys.exit(0)
 
     for package in packages.values():
-	# It's util-linux on Debian, but sys-apps/util-linux on Gentoo, this search should find it on both
+        # It's util-linux on Debian, but sys-apps/util-linux on Gentoo, this search should find it on both
         if re.compile("util-linux").search(package.name):
             continue
 
@@ -271,7 +271,7 @@ def lsofcheck():
     for line in os.popen('lsof +XL -F nf').readlines():
         field, data = line[0], line[1:-1]
 
-	# p for PID
+        # p for PID
         if field == 'p':
             process = processes.setdefault(data,Process(int(data)))
 
@@ -282,74 +282,74 @@ def lsofcheck():
             process.descriptors.append(data)
 
         elif field == 'n':
-	    # We are detecting memory/disk differnces in a lot of files all over the disk, but a difference/deleted status
-	    # of a file in /tmp doesn't mean we should reload.
+            # We are detecting memory/disk differnces in a lot of files all over the disk, but a difference/deleted status
+            # of a file in /tmp doesn't mean we should reload.
 
             # So here is the beginnig of a configuration file and/or command line system to set where we search.
 
             # I beleive this search is close to optimal as a default configuration.
             # It detects most software upgrades done within the package system.
-	    searchlist = []
-	    searchlist = ['/bin/', '/lib', '/sbin/']
+            # searchlist = []
+            searchlist = ['/bin/', '/lib', '/sbin/']
 
             # An alternative using all files in standard package system paths.
             # It does detect false positives in /usr/share though.
-	    whitelist = []
-#	    whitelist = ['/bin', '/lib', '/opt', '/sbin', '/usr']
+            whitelist = []
+            # whitelist = ['/bin', '/lib', '/opt', '/sbin', '/usr']
 
             # We also support a blacklist.
             # The change of detecting false positives is worse here,
             # but that doesn't mean it isn't useful.
-	    blacklist = []
-#	    blacklist = ["/var", "/tmp", "/home", "/SYSV", "/dev"]
+            blacklist = []
+            # blacklist = ["/var", "/tmp", "/home", "/SYSV", "/dev"]
 
-	    # Make sure the user isn't expecting to mix the lists
+            # Make sure the user isn't expecting to mix the lists
             # As we unfortunately don't support it.
-	    setlist = 0
-	    if len(searchlist) > 0:
-		setlist = 1
-	    if len(whitelist) > 0:
-		setlist = setlist + 1
-	    if len(blacklist) > 0:
-		setlist = setlist + 1
-	    if setlist > 1:
-		print "You have to choose either search, white or black list."
-		sys.exit(1)
+            setlist = 0
+            if len(searchlist) > 0:
+                setlist = 1
+            if len(whitelist) > 0:
+                setlist = setlist + 1
+            if len(blacklist) > 0:
+                setlist = setlist + 1
+            if setlist > 1:
+                print "You have to choose either search, white or black list."
+                sys.exit(1)
 
             # The searchlist code, default ignore everything
-	    if len(searchlist) > 0:
-		found = -1
-		for list in searchlist:
-		    if re.compile(list).search(data):
-			found = 1
-			break
+            if len(searchlist) > 0:
+                found = -1
+                for list in searchlist:
+                    if re.compile(list).search(data):
+                        found = 1
+                        break
 
             # The whitelist, default ignore everything
-	    elif len(whitelist) > 0:
-		# Whitelist, so default is ignore
-		found = -1
-	    	for list in whitelist:
-		    if data.startswith( list ):
-		    	found = 1
-		    	break
+            elif len(whitelist) > 0:
+                # Whitelist, so default is ignore
+                found = -1
+                for list in whitelist:
+                    if data.startswith( list ):
+                        found = 1
+                        break
 
             # the blacklist, default accept everything
-	    elif len(blacklist) > 0:
-		# Blacklist, here we allow everything, unless it's in the list
-		found = 1
-		for list in blacklist:
-		    if data.startswith( list ):
-		        found = -1
-		        break
+            elif len(blacklist) > 0:
+                # Blacklist, here we allow everything, unless it's in the list
+                found = 1
+                for list in blacklist:
+                    if data.startswith( list ):
+                        found = -1
+                        break
 
-	    if found == 1:
-		process.files.append(data)
-	    else:
-	    # We remove every descriptor for files that we don't bother checking. We just need to remove/change descriptors
-	    # that contains "DEL", but as I haven't done much python yet, I don't know what is fastest. .pop() + searching less
-	    # records or if + .pop() + searching some more records. It's also possible replacing .pop() with descriptor = "xxx"
-	    # would be faster.
-	        process.descriptors.pop()
+            if found == 1:
+                process.files.append(data)
+            else:
+                # We remove every descriptor for files that we don't bother checking. We just need to remove/change descriptors
+                # that contains "DEL", but as I haven't done much python yet, I don't know what is fastest. .pop() + searching less
+                # records or if + .pop() + searching some more records. It's also possible replacing .pop() with descriptor = "xxx"
+                # would be faster.
+                process.descriptors.pop()
 
     toRestart = filter(lambda process: process.needsRestart(),
                        processes.values())
@@ -405,34 +405,34 @@ def delmaps (pid):
 
 
 class SysProcess:
-	re_name = re.compile('Name:\t(.*)$')
-	re_uids = re.compile('Uid:\t(\d+)\t(\d+)\t(\d+)\t(\d+)$')
-	processes = {}
-	def get (pid):
-		try:
-			return Process.processes [pid]
-		except KeyError:
-			Process.processes [pid] = Process (pid)
-			return Process.get (pid)
+    re_name = re.compile('Name:\t(.*)$')
+    re_uids = re.compile('Uid:\t(\d+)\t(\d+)\t(\d+)\t(\d+)$')
+    processes = {}
+    def get (pid):
+        try:
+            return Process.processes [pid]
+        except KeyError:
+            Process.processes [pid] = Process (pid)
+            return Process.get (pid)
 
-	# private
-	def __init__ (self, pid):
-		self.pid = pid
+        # private
+        def __init__ (self, pid):
+            self.pid = pid
 
-		status = open ('/proc/%d/status' % (self.pid))
-		for line in status.readlines ():
-			m = self.re_name.match (line)
-			if m:
-				self.name = m.group (1)
-				continue
-			m = self.re_uids.match (line)
-			if m:
-				self.user = pwd.getpwuid (string.atoi (m.group (1)))[0]
-				continue
-		status.close ()
-	
-	def info (self):
-		return '%d %s %s' % (self.pid, self.name, self.user)
+            status = open ('/proc/%d/status' % (self.pid))
+            for line in status.readlines ():
+                m = self.re_name.match (line)
+                if m:
+                    self.name = m.group (1)
+                    continue
+                m = self.re_uids.match (line)
+                if m:
+                    self.user = pwd.getpwuid (string.atoi (m.group (1)))[0]
+                    continue
+            status.close ()
+
+        def info (self):
+            return '%d %s %s' % (self.pid, self.name, self.user)
 
 class Process:
     def __init__(self, pid):
@@ -513,32 +513,28 @@ class Process:
     # just check if it used libraries named '.dpkg-new' since that's
     # what dpkg would do. Now we need to be more contrieved.
     def needsRestart(self):
+        # The order of if's is speed optimized.
+        # Links rarely contains data, so it's quickle done.
+        # Then we check descriptors = "DEL"
+        # And last we do the complicated searches through files.
 
-	# The order of if's is speed optimized.
-	#
-	# Links rarely contains data, so it's quickle done.
-	#
-	# Then we check descriptors = "DEL"
-	#
- 	# And last we do the complicated searches through files.
+        # Mir Note: Never seen a links record, so no idea if this is correct.
+        for f in self.links:
+            if f == 0:
+                return 1
 
-	# Mir Note: Never seen a links record, so no idea if this is correct.
-	for f in self.links:
-	    if f == 0:
-	    	return 1
-
-	# if we find descriptors = "DEL" mark it for restart.
-	for f in self.descriptors:
+        # if we find descriptors = "DEL" mark it for restart.
+        for f in self.descriptors:
             if f == "DEL":
-	    	return 1
+                return 1
 
-	# If all else fails, we look through files to detect memory/disk differences.
+        # If all else fails, we look through files to detect memory/disk differences.
         for f in self.files:
             if f.endswith(' (deleted)'):
-	    	return 1
+                return 1
 
-	    if re.compile("\(path inode=[0-9]+\)$").search(f):
-	    	return 1
+            if re.compile("\(path inode=[0-9]+\)$").search(f):
+                return 1
 
         return 0
 
