@@ -218,7 +218,7 @@ def main():
                 else:
                     # Workarounds for some packages
                     # TODO: substitutions hash instead of hardcoded paths
-                    if proc_name.startswith('mysqld') and os.path.exists('/etc/init.d/mysql'):
+                    if os.path.exists('/etc/init.d/mysql') and (proc_name.startswith('mysqld') or proc_name.startswith('mariadbd')):
                         package.initscripts.add('mysql')
 
     restartable = []
